@@ -1,0 +1,13 @@
+fastapi
+uvicorn
+python-multipart
+Pillow
+google-generativeai
+langchain-google-genai
+langchain-core
+sentence-transformers
+faiss-cpu
+numpy
+PyMuPDF
+fpdf
+pydantic

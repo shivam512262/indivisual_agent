@@ -11,4 +11,4 @@ numpy
 PyMuPDF
 fpdf
 pydantic
-faiss-cpu
+python-dotenv

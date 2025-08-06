@@ -1,6 +1,6 @@
 import os
 import PIL.Image
-import google.generativeai as genai
+import google.generativeai as genai # Keep this import for agent functions
 from langchain_google_genai import GoogleGenerativeAI
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 import faiss
@@ -11,8 +11,8 @@ import asyncio
 from fpdf import FPDF
 from io import BytesIO
 
-# --- Configure Google Generative AI (once) ---
-genai.configure(api_key=os.getenv('GOOGLE_API_KEY'))
+# --- REMOVED: genai.configure(api_key=os.getenv('GOOGLE_API_KEY')) from here ---
+# This configuration will now happen only once in app_fastapi.py's startup_event
 
 # --- SentenceTransformer Model (for symptoms) ---
 try:
@@ -75,7 +75,7 @@ def queryAnalysis(prompt):
     llm = GoogleGenerativeAI(
         model='gemini-2.0-flash',
         temperature=0,
-        api_key=os.getenv('GOOGLE_API_KEY'),
+        api_key=os.getenv('GOOGLE_API_KEY'), # This will now be correctly loaded
         max_tokens=None,
         timeout=30,
         max_retries=2
@@ -109,7 +109,7 @@ def load_vector_db(index_path="faiss_index.idx", chunks_file="text_chunks.pkl"):
     """
     if not os.path.exists(index_path) or not os.path.exists(chunks_file):
         raise FileNotFoundError(
-            f"Vector DB files not found. Please ensure '{index_path}' and '{chunks_file}' exist."
+            f"Medical knowledge base files not found. Please ensure '{index_path}' and '{chunks_file}' exist in the same directory as this script."
         )
     index = faiss.read_index(index_path)
     with open(chunks_file, "rb") as f:
@@ -134,7 +134,7 @@ def answer_generation_symptoms(input_text):
     llm = GoogleGenerativeAI(
         model='gemini-1.5-flash',
         temperature=0,
-        api_key=os.getenv('GOOGLE_API_KEY'),
+        api_key=os.getenv('GOOGLE_API_KEY'), # This will now be correctly loaded
         max_tokens=None,
         timeout=30,
         max_retries=2
@@ -175,9 +175,9 @@ def retrieve_and_answer(query_text, index_path="faiss_index.idx", chunks_file="t
         response = answer_generation_symptoms(f"Context: {context}\nQuestion: {query_text}")
         return response
     except FileNotFoundError as e:
-        return f"Error: {e}. Please ensure the necessary FAISS index and text chunks files are available."
+        raise RuntimeError(f"Medical knowledge base files missing: {e}. Please ensure FAISS index and chunks are correctly placed.")
     except Exception as e:
-        return f"An error occurred during retrieval and answering: {e}"
+        raise RuntimeError(f"An error occurred during retrieval and answering: {e}")
 
 # --- Structured Output Agent (currently unused in mainAgent, but included for completeness) ---
 def structAgent(prompt, output):
@@ -187,7 +187,7 @@ def structAgent(prompt, output):
     llm = GoogleGenerativeAI(
         model='gemini-1.5-flash',
         temperature=0,
-        api_key=os.getenv('GOOGLE_API_KEY'),
+        api_key=os.getenv('GOOGLE_API_KEY'), # This will now be correctly loaded
         max_tokens=None,
         timeout=30,
         max_retries=2
@@ -212,7 +212,7 @@ def ICULogAnalysisAgent(icu_log_data: str) -> str:
     llm = GoogleGenerativeAI(
         model='gemini-2.0-flash',
         temperature=0.2,
-        api_key=os.getenv('GOOGLE_API_KEY'),
+        api_key=os.getenv('GOOGLE_API_KEY'), # This will now be correctly loaded
         max_tokens=1500,
         timeout=60,
         max_retries=3
@@ -242,18 +242,11 @@ def PDFGeneratorAgent(report_string: str) -> BytesIO:
     pdf.add_page()
     pdf.set_font("Arial", size=12)
 
-    # FPDF's multi_cell handles text wrapping.
-    # It's best to encode to 'latin-1' or a font that supports UTF-8 if needed,
-    # as FPDF's default fonts are often limited.
-    # For general text, 'latin-1' with 'replace' is a common fallback.
     pdf.multi_cell(0, 10, report_string.encode('latin-1', 'replace').decode('latin-1'))
 
-    # Get the PDF content as bytes directly from pdf.output()
-    pdf_content_bytes = pdf.output(dest='S').encode('latin-1') # 'S' returns as string, then encode to bytes
-
-    # Wrap these bytes in a BytesIO object
+    pdf_content_bytes = pdf.output(dest='S').encode('latin-1')
     pdf_output = BytesIO(pdf_content_bytes)
-    pdf_output.seek(0) # Rewind to the beginning of the stream
+    pdf_output.seek(0)
     return pdf_output
 
 # --- Image Classifier Agent ---
@@ -261,6 +254,7 @@ def imgClassifier(img, prompt):
     """
     Classifies the type of image and routes it to the appropriate image analysis agent.
     """
+    model = genai.GenerativeModel(model_name="gemini-2.0-flash")
     base_prompt = (
         "You are an image classifier agent, you have to classify the image into 3 categories: "
         "if the image is an xray, respond 'xray'. "
@@ -270,7 +264,6 @@ def imgClassifier(img, prompt):
         "Always reply with only one of the given options in all lowercase."
     )
     
-    model = genai.GenerativeModel(model_name="gemini-2.0-flash")
     response = model.generate_content([base_prompt, img])
     
     if 'wound' in response.text:
@@ -291,22 +284,18 @@ def routerAgent(img, prompt):
     This simplified router is intended for use when FastAPI endpoints explicitly handle
     ICU log analysis and image processing.
     """
-    # If an image is provided, always prioritize image analysis
     if img:
         imgAnalysis = imgClassifier(img, prompt)
         return imgAnalysis
     
-    # If no image, then analyze the text prompt
-    # Use a simple keyword check for now to distinguish symptoms from general queries.
     if 'symptom' in prompt.lower():
         result = retrieve_and_answer(prompt)
         return result
     else:
-        # Default to general query analysis if no specific symptom or image
         queryOutput = queryAnalysis(prompt)
         return queryOutput
 
-# --- Main Agent Function (as it was) ---
+# --- Main Agent Function ---
 def mainAgent(prompt, img=None):
     """
     Main agent function to route the medical query based on input type.

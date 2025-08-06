@@ -7,13 +7,22 @@ import asyncio
 from typing import Optional
 from pydantic import BaseModel
 import datetime
-from PIL import Image # <--- ADDED THIS IMPORT
+from PIL import Image
+
+# Import dotenv to load environment variables from .env file
+from dotenv import load_dotenv
+
+# Load environment variables from .env file as early as possible
+# This ensures that os.getenv() will work for variables defined in .env
+load_dotenv()
 
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.responses import JSONResponse, Response
 
 # Import all necessary agents from the consolidated main.py
+# We will NOT import genai directly here, as its configuration needs to happen after dotenv.
 from main import mainAgent, ICULogAnalysisAgent, PDFGeneratorAgent, imgClassifier, queryAnalysis, retrieve_and_answer
+import google.generativeai as genai # Import genai directly here for configuration
 
 app = FastAPI(
     title="Cureify Medical Decision Support API",
@@ -21,11 +30,25 @@ app = FastAPI(
     version="1.0.0",
 )
 
+# --- FastAPI Startup Event ---
+# This event runs once when the application starts up, AFTER dotenv is loaded.
+@app.on_event("startup")
+async def startup_event():
+    api_key = os.getenv('GOOGLE_API_KEY')
+    if not api_key:
+        print("CRITICAL ERROR: GOOGLE_API_KEY environment variable is not set. API calls will fail.")
+        # You might want to raise an exception here to prevent the app from starting
+        # raise ValueError("GOOGLE_API_KEY is not set!")
+    else:
+        print(f"DEBUG: GOOGLE_API_KEY loaded successfully (first 5 chars): {api_key[:5]}*****")
+        genai.configure(api_key=api_key)
+        print("DEBUG: Google Generative AI configured.")
+
 # Pydantic model for ICU Log Analysis request
 class ICULogRequest(BaseModel):
     icu_log_data: str
 
-# Pydantic model for Image Processing request
+# Pydantic model for Image Processing request (not directly used by endpoint, but good for clarity)
 class ImageProcessRequest(BaseModel):
     prompt: Optional[str] = None
     image: str # Base64 encoded image string is expected here
@@ -58,6 +81,9 @@ async def analyze_icu_log(request: ICULogRequest):
         }
         return Response(content=pdf_bytes_io.getvalue(), media_type="application/pdf", headers=headers)
     except Exception as e:
+        # Catch potential RuntimeError from ICULogAnalysisAgent if API key is still an issue
+        if "No API_KEY" in str(e) or "authentication" in str(e).lower():
+            raise HTTPException(status_code=500, detail=f"API Key issue during ICU log analysis: {e}. Please check your GOOGLE_API_KEY.")
         raise HTTPException(status_code=500, detail=f"An error occurred during ICU log analysis or PDF generation: {e}")
 
 @app.post("/process_image", summary="Process an image with an optional medical query")
@@ -75,23 +101,21 @@ async def process_image(
         raise HTTPException(status_code=400, detail="Unsupported file type. Please upload an image (PNG, JPG).")
 
     img_data = None
-    with tempfile.TemporaryDirectory() as temp_dir:
-        file_path = os.path.join(temp_dir, file.filename)
-        with open(file_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
-        
-        try:
-            img_data = Image.open(file_path) # Image is now defined
-            if img_data.mode in ("RGBA", "P"):
-                img_data = img_data.convert("RGB")
-        except Exception as e:
-            raise HTTPException(status_code=400, detail=f"Could not process image file: {e}")
+    try:
+        file_content = await file.read()
+        img_data = Image.open(BytesIO(file_content))
+        if img_data.mode in ("RGBA", "P"):
+            img_data = img_data.convert("RGB")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Could not process image file: {e}")
 
     try:
-        # Directly call imgClassifier as this endpoint is specifically for images
         result = await asyncio.to_thread(imgClassifier, img_data, prompt if prompt else "")
         return JSONResponse(content={"response_text": result})
     except Exception as e:
+        # Catch potential RuntimeError from imgClassifier if API key is still an issue
+        if "No API_KEY" in str(e) or "authentication" in str(e).lower():
+            raise HTTPException(status_code=500, detail=f"API Key issue during image processing: {e}. Please check your GOOGLE_API_KEY.")
         raise HTTPException(status_code=500, detail=f"An error occurred during image processing: {e}")
 
 @app.post("/generate_text_report", summary="Generate a text-based medical report from a prompt")
@@ -102,8 +126,6 @@ async def generate_text_report(request: TextReportRequest):
     - **prompt**: Your medical symptoms or general medical query.
     """
     try:
-        # Determine if it's a symptom query or general query based on prompt content
-        # This mirrors the logic that would have been in the routerAgent for text-only inputs
         if 'symptom' in request.prompt.lower():
             result = await asyncio.to_thread(retrieve_and_answer, request.prompt)
         else:
@@ -111,5 +133,11 @@ async def generate_text_report(request: TextReportRequest):
             
         return JSONResponse(content={"response_text": result})
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"An error occurred during text report generation: {e}")
+        # Catch potential RuntimeError from agents if API key or FAISS files are missing
+        if "No API_KEY" in str(e) or "authentication" in str(e).lower():
+            raise HTTPException(status_code=500, detail=f"API Key issue during text report generation: {e}. Please check your GOOGLE_API_KEY.")
+        elif isinstance(e, RuntimeError) and "Medical knowledge base files missing" in str(e):
+            raise HTTPException(status_code=500, detail=str(e))
+        else:
+            raise HTTPException(status_code=500, detail=f"An unexpected error occurred during text report generation: {e}")
 

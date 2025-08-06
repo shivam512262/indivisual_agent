@@ -3,5 +3,5 @@ venv
 __pycache__/
 *.pyc
 *.pyo       
-.faiss_index.idx
-.text_chunks.pkl
+faiss_index.idx
+text_chunks.pkl

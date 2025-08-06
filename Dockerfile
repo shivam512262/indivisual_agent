@@ -1,5 +1,5 @@
 # Use a slim Python base image for smaller size
-FROM python:3.12-slim # Changed from python:3.12-slim-buster
+FROM python:3.12-slim
 
 # Set the working directory in the container
 WORKDIR /app
@@ -9,7 +9,7 @@ WORKDIR /app
 # apt-get install -y --no-install-recommends: Installs packages without recommended dependencies
 #   build-essential: Provides essential tools for compiling software (gcc, g++, make, libc-dev etc.)
 #   pkg-config: Helps find libraries for compilation
-#   libopenblas-dev: OpenBLAS development files, often a dependency for optimized numerical libraries like FAISS
+#   libopenblas-dev: OpenBLAS development files, often a dependency for optimized numerical numerical libraries like FAISS
 #   liblapack-dev: LAPACK development files, also common for numerical libraries
 #   libjpeg-dev: Required by Pillow for JPEG image support
 #   zlib1g-dev: Required by Pillow for PNG/Zlib support

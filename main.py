@@ -1,6 +1,6 @@
 import os
 import PIL.Image
-import google.generativeai as genai # Keep this import for agent functions
+import google.generativeai as genai
 from langchain_google_genai import GoogleGenerativeAI
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 import faiss
@@ -10,9 +10,12 @@ import pickle
 import asyncio
 from fpdf import FPDF
 from io import BytesIO
+import datetime # Import for date in PDF
+import re # Import for regular expressions to handle Markdown
 
-# --- REMOVED: genai.configure(api_key=os.getenv('GOOGLE_API_KEY')) from here ---
+# --- Configure Google Generative AI (once) ---
 # This configuration will now happen only once in app_fastapi.py's startup_event
+# genai.configure(api_key=os.getenv('GOOGLE_API_KEY')) # REMOVED from here
 
 # --- SentenceTransformer Model (for symptoms) ---
 try:
@@ -75,7 +78,7 @@ def queryAnalysis(prompt):
     llm = GoogleGenerativeAI(
         model='gemini-2.0-flash',
         temperature=0,
-        api_key=os.getenv('GOOGLE_API_KEY'), # This will now be correctly loaded
+        api_key=os.getenv('GOOGLE_API_KEY'),
         max_tokens=None,
         timeout=30,
         max_retries=2
@@ -134,7 +137,7 @@ def answer_generation_symptoms(input_text):
     llm = GoogleGenerativeAI(
         model='gemini-1.5-flash',
         temperature=0,
-        api_key=os.getenv('GOOGLE_API_KEY'), # This will now be correctly loaded
+        api_key=os.getenv('GOOGLE_API_KEY'),
         max_tokens=None,
         timeout=30,
         max_retries=2
@@ -187,7 +190,7 @@ def structAgent(prompt, output):
     llm = GoogleGenerativeAI(
         model='gemini-1.5-flash',
         temperature=0,
-        api_key=os.getenv('GOOGLE_API_KEY'), # This will now be correctly loaded
+        api_key=os.getenv('GOOGLE_API_KEY'),
         max_tokens=None,
         timeout=30,
         max_retries=2
@@ -212,7 +215,7 @@ def ICULogAnalysisAgent(icu_log_data: str) -> str:
     llm = GoogleGenerativeAI(
         model='gemini-2.0-flash',
         temperature=0.2,
-        api_key=os.getenv('GOOGLE_API_KEY'), # This will now be correctly loaded
+        api_key=os.getenv('GOOGLE_API_KEY'),
         max_tokens=1500,
         timeout=60,
         max_retries=3
@@ -236,17 +239,84 @@ def ICULogAnalysisAgent(icu_log_data: str) -> str:
 # --- PDFGeneratorAgent ---
 def PDFGeneratorAgent(report_string: str) -> BytesIO:
     """
-    Generates a PDF file from a given detailed medical report string.
+    Generates a PDF file from a given detailed medical report string, with improved aesthetics.
     """
     pdf = FPDF()
     pdf.add_page()
-    pdf.set_font("Arial", size=12)
 
-    pdf.multi_cell(0, 10, report_string.encode('latin-1', 'replace').decode('latin-1'))
+    # Set margins
+    pdf.set_left_margin(20)
+    pdf.set_right_margin(20)
+    pdf.set_top_margin(20)
+    pdf.set_auto_page_break(auto=True, margin=15)
 
+    # Header
+    pdf.set_font("Arial", "B", 16)
+    pdf.cell(0, 10, "ICU Patient Log Analysis Report", 0, 1, "C")
+    pdf.set_font("Arial", "", 10)
+    pdf.cell(0, 5, f"Date: {datetime.date.today().strftime('%Y-%m-%d')}", 0, 1, "C")
+    pdf.ln(10) # Line break
+
+    # Content
+    pdf.set_font("Arial", "", 12)
+    # Process the report string line by line to handle Markdown formatting
+    lines = report_string.split('\n')
+    for line in lines:
+        line = line.strip()
+        if not line: # Skip empty lines, add a small line break for paragraph separation
+            pdf.ln(5)
+            continue
+
+        # Handle ## Headings
+        if line.startswith('## '):
+            pdf.set_font("Arial", "B", 14) # Larger bold font for headings
+            pdf.multi_cell(0, 10, line[3:].encode('latin-1', 'replace').decode('latin-1')) # Remove '## '
+            pdf.set_font("Arial", "", 12) # Reset font to normal
+            pdf.ln(2) # Small break after heading
+            continue
+
+        # Handle **bold text** and *list items*
+        processed_line = line
+        
+        # Process bold text: find **text** and replace with bolded version
+        # Use a regex to find bolded sections
+        def replace_bold(match):
+            text_content = match.group(1)
+            # FPDF doesn't directly support inline bolding in multi_cell like HTML.
+            # We'll print bolded segments separately.
+            return f"__BOLD_START__{text_content}__BOLD_END__"
+        
+        processed_line = re.sub(r'\*\*(.*?)\*\*', replace_bold, processed_line)
+
+        # Process list items (simple simulation with indentation)
+        if processed_line.startswith('* '):
+            pdf.set_x(pdf.get_x() + 5) # Indent for list item
+            processed_line = processed_line[2:] # Remove '* '
+
+        # Print the line, handling bold segments
+        parts = processed_line.split('__BOLD_START__')
+        for i, part in enumerate(parts):
+            if '__BOLD_END__' in part:
+                bold_text, remaining_text = part.split('__BOLD_END__', 1)
+                pdf.set_font("Arial", "B", 12) # Set bold font
+                pdf.write(8, bold_text.encode('latin-1', 'replace').decode('latin-1'))
+                pdf.set_font("Arial", "", 12) # Reset to normal font
+                pdf.write(8, remaining_text.encode('latin-1', 'replace').decode('latin-1'))
+            else:
+                pdf.write(8, part.encode('latin-1', 'replace').decode('latin-1'))
+        pdf.ln(8) # New line after processing parts of a line
+        
+    pdf.ln(10) # Add space before footer
+
+    # Footer
+    pdf.set_y(-15) # Position 1.5 cm from bottom
+    pdf.set_font("Arial", "I", 8) # Italic font
+    pdf.cell(0, 10, f"Page {pdf.page_no()}/{{nb}}", 0, 0, "C") # Page number
+
+    # Get the PDF content as bytes directly from pdf.output()
     pdf_content_bytes = pdf.output(dest='S').encode('latin-1')
     pdf_output = BytesIO(pdf_content_bytes)
-    pdf_output.seek(0)
+    pdf_output.seek(0) # Rewind to the beginning of the stream
     return pdf_output
 
 # --- Image Classifier Agent ---

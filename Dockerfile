@@ -9,17 +9,15 @@ WORKDIR /app
 # apt-get install -y --no-install-recommends: Installs packages without recommended dependencies
 #   build-essential: Provides essential tools for compiling software (gcc, g++, make, libc-dev etc.)
 #   pkg-config: Helps find libraries for compilation
-#   libopenblas-dev: OpenBLAS development files, often a dependency for optimized numerical numerical libraries like FAISS
+#   libopenblas-dev: OpenBLAS development files, often a dependency for optimized numerical libraries like FAISS
 #   liblapack-dev: LAPACK development files, also common for numerical libraries
 #   libjpeg-dev: Required by Pillow for JPEG image support
 #   zlib1g-dev: Required by Pillow for PNG/Zlib support
-#   freetyped-dev: Required by Pillow for font rendering
+#   libfreetype-dev: Corrected name for FreeType development files (used by Pillow)
 #   liblcms2-dev: Required by Pillow for Little CMS support
 #   libwebp-dev: Required by Pillow for WebP image support
-#   tcl-dev, tk-dev: Sometimes needed for tkinter, though not directly in your requirements, good for general Python dev
 #   git: Needed by sentence-transformers for downloading models from Hugging Face if not cached
-#   poppler-utils: Often needed for PDF processing tools, though PyMuPDF might not strictly require it, it's good practice
-#   (Note: PyMuPDF often comes with its own binaries, but these general libs help)
+#   (Removed tcl-dev, tk-dev, poppler-utils as they might not be strictly necessary and can be added later if issues arise)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     pkg-config \
@@ -27,13 +25,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     liblapack-dev \
     libjpeg-dev \
     zlib1g-dev \
-    freetyped-dev \
+    libfreetype-dev \
     liblcms2-dev \
     libwebp-dev \
-    tcl-dev \
-    tk-dev \
     git \
-    poppler-utils \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy your requirements file first to leverage Docker caching
